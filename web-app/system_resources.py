@@ -1,6 +1,6 @@
 # ==============================================================================
 # File: .//Description-of-file/system_resources.md
-# Overview: Dynamic memory detection across Linux cgroups, procfs, and Windows, determining safe concurrency budgets.
+# Overview: Dynamic memory detection and CPU quota inspection determining safe concurrency budgets.
 # ==============================================================================
 
 import os  # Operating system interactions
@@ -81,34 +81,69 @@ def get_available_memory_mb() -> float:
     return 256.0  # Conservative baseline in MB
 
 
+def get_available_cpu_quota() -> float:
+    """
+    Detects available CPU quota fraction in containers (e.g. Render 0.1 CPU)
+    or returns physical host CPU core count.
+    """
+    # 1. Linux Cgroups v2 cpu.max
+    cg2_cpu = "/sys/fs/cgroup/cpu.max"  # Path to cgroups v2 cpu quota
+    if os.path.exists(cg2_cpu):  # Verify presence
+        try:  # Attempt read
+            with open(cg2_cpu, "r", encoding="utf-8") as f:  # Open file
+                parts = f.read().strip().split()  # Split quota and period
+                if len(parts) >= 2 and parts[0] != "max":  # If quota constrained
+                    quota = float(parts[0])  # Quota in microseconds
+                    period = float(parts[1])  # Period in microseconds
+                    if period > 0:  # Validate period
+                        return max(0.1, quota / period)  # Return CPU fraction
+        except Exception:  # Handle error
+            pass  # Pass
+
+    # 2. Linux Cgroups v1 CFS quota
+    cg1_quota = "/sys/fs/cgroup/cpu/cpu.cfs_quota_us"  # Path to cgroups v1 quota
+    cg1_period = "/sys/fs/cgroup/cpu/cpu.cfs_period_us"  # Path to cgroups v1 period
+    if os.path.exists(cg1_quota) and os.path.exists(cg1_period):  # Verify presence
+        try:  # Attempt read
+            with open(cg1_quota, "r", encoding="utf-8") as f:  # Read quota
+                q = float(f.read().strip())  # Parse quota
+            with open(cg1_period, "r", encoding="utf-8") as f:  # Read period
+                p = float(f.read().strip())  # Parse period
+            if q > 0 and p > 0:  # If constrained
+                return max(0.1, q / p)  # Return CPU fraction
+        except Exception:  # Handle error
+            pass  # Pass
+
+    # 3. Host CPU core count
+    return float(os.cpu_count() or 1)  # Fallback to physical cores
+
+
 def calculate_render_budget(is_video: bool = True) -> RenderBudget:
     """
     Calculates concurrency workers, encoding threads, and memory budget
-    while enforcing a hard safety reserve to prevent out-of-memory errors.
+    by evaluating both available RAM and CPU quota limits.
     """
     avail_mb = get_available_memory_mb()  # Measure current available memory
+    cpu_quota = get_available_cpu_quota()  # Measure CPU quota fraction
 
     # Reserve safety headroom for Python server runtime, OS kernel, and temporary buffers
-    # User requested using nearly all memory (e.g. 510 MB of 512 MB) without triggering error
     safety_margin = min(64.0, max(32.0, avail_mb * 0.10))  # 10% safety margin, bounded between 32MB and 64MB
     usable_mb = max(32.0, avail_mb - safety_margin)  # Calculate usable budget
 
-    # Calculate optimal workers and threads based on usable memory
-    if usable_mb < 180.0:  # Tight memory constraint (< 180 MB)
-        workers = 1  # Single worker
-        threads_per_worker = 1  # Single thread
-    elif usable_mb < 400.0:  # Medium constraint (e.g. 200 MB to 400 MB)
-        workers = 2  # 2 parallel workers (~80 MB combined memory)
+    # Concurrency allocation bounded by both CPU quota and usable RAM
+    # On fractional CPU containers (e.g. Render 0.1 CPU), running multiple workers
+    # throttles the container, causing Python to drop HTTP pings and trigger 502 errors.
+    if cpu_quota < 1.2 or usable_mb < 350.0:  # Fractional CPU or low memory
+        workers = 1  # Exactly 1 worker prevents CPU starvation
+        threads_per_worker = 1  # 1 thread
+    elif cpu_quota < 2.2 or usable_mb < 850.0:  # Dual-core or moderate memory
+        workers = 2  # 2 parallel workers
         threads_per_worker = 1  # 1 thread each
-    elif usable_mb < 850.0:  # Moderate headroom (400 MB to 850 MB)
-        workers = 3  # 3 parallel workers (~120 MB combined memory)
+    elif cpu_quota < 4.2 or usable_mb < 1800.0:  # Quad-core or good memory
+        workers = min(3, int(cpu_quota))  # Up to 3 workers
         threads_per_worker = 1  # 1 thread each
-    elif usable_mb < 1600.0:  # Generous headroom (850 MB to 1600 MB)
-        workers = 4  # 4 parallel workers
-        threads_per_worker = 2  # 2 threads each
-    else:  # High-resource machine (> 1600 MB available)
-        cpu_cores = os.cpu_count() or 4  # Query CPU core count
-        workers = min(8, max(2, cpu_cores))  # Up to 8 parallel workers
+    else:  # High-resource machine (e.g. 8+ cores, > 1.8 GB RAM)
+        workers = min(6, int(cpu_quota))  # Up to 6 parallel workers
         threads_per_worker = 2  # 2 threads each
 
     return RenderBudget(  # Return typed budget

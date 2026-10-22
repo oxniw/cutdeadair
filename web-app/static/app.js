@@ -420,14 +420,17 @@ document.addEventListener("DOMContentLoaded", () => {
         })
         .catch((err) => {
           consecutiveErrors++;
-          if (err.message.includes("404") || consecutiveErrors >= 8) {
+          if (consecutiveErrors >= 3) {
+            statusText.textContent = "Server busy, holding connection...";
+          }
+          if (err.message.includes("404") || consecutiveErrors >= 16) {
             clearInterval(pollInterval);
             processBtn.disabled = false;
             scanBtn.disabled = false;
-            statusText.textContent = "Session lost or server restarted. Please re-upload file.";
+            statusText.textContent = "Session interrupted. Please re-upload your media.";
             alert("The rendering session was interrupted or the server restarted. Please re-upload your media and try again.");
           }
         });
-    }, 800);
+    }, 1200);
   }
 });

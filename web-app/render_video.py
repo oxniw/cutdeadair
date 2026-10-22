@@ -1,9 +1,11 @@
 # ==============================================================================
 # File: .//Description-of-file/render_video.md
-# Overview: Memory-budgeted concurrent video rendering engine dynamically adjusting workers and threads to available RAM.
+# Overview: Memory-budgeted and CPU-quota aware concurrent video rendering engine preventing gateway timeouts and OOM crashes.
 # ==============================================================================
 
 import os  # Operating system file operations
+import sys  # System platform information
+import time  # Sleep utility for yielding CPU
 import subprocess  # Subprocess execution for FFmpeg
 import tempfile  # Temporary directory management
 from concurrent.futures import ThreadPoolExecutor, as_completed  # Managed concurrent execution
@@ -21,16 +23,19 @@ def _render_single_slice(
     video_crf: int = 22,  # Target video quality constant rate factor
     threads: int = 1,  # Worker thread count
 ) -> None:
-    """Renders a single video slice using bounded memory and specified thread limit."""
+    """Renders a single video slice using bounded CPU priority, fast decoding, and bounded threads."""
+    duration = max(0.01, end - start)  # Compute positive slice duration
+
     cmd = [  # Construct FFmpeg execution argument list
         "ffmpeg",  # Binary name
         "-y",  # Overwrite destination file without prompting
         "-hide_banner",  # Suppress banner output
         "-ss", f"{start:.3f}",  # Fast seek to start timestamp
-        "-to", f"{end:.3f}",  # Cut up to end timestamp
+        "-t", f"{duration:.3f}",  # Explicit duration limit
         "-i", input_path,  # Input file path
         "-c:v", "libx264",  # Standard H.264 video codec
         "-preset", video_preset,  # Ultrafast preset avoids lookahead buffers
+        "-tune", "fastdecode",  # Optimizes decoding pipeline speed
         "-crf", str(video_crf),  # Video quality level
         "-threads", str(max(1, threads)),  # Bounded thread allocation
         "-c:a", "aac",  # AAC audio codec
@@ -40,11 +45,15 @@ def _render_single_slice(
         output_path,  # Output destination path
     ]  # End of command arguments
 
+    # Run FFmpeg with lower scheduling priority on Linux to ensure Python HTTP server never gets starved
+    preexec = (lambda: os.nice(10)) if sys.platform != "win32" and hasattr(os, "nice") else None  # POSIX niceness
+
     process = subprocess.run(  # Execute FFmpeg subprocess synchronously
         cmd,  # Command list
         stdout=subprocess.PIPE,  # Capture standard output
         stderr=subprocess.PIPE,  # Capture standard error
         text=True,  # Decode text stream
+        preexec_fn=preexec,  # Set process priority
     )  # Await process exit
     if process.returncode != 0:  # Check return code for error
         raise RuntimeError(f"FFmpeg slice rendering failed: {process.stderr}")  # Raise descriptive error
@@ -58,7 +67,7 @@ def render_video(
     video_crf: int = 22,  # Encoding quality default
     progress_callback: Optional[Callable[[float, str], None]] = None,  # Progress reporter
 ) -> str:
-    """Renders video segments concurrently within dynamic memory safety budgets."""
+    """Renders video segments within dynamic memory and CPU quota safety budgets."""
     if not keep_segments:  # Guard against empty segment lists
         raise ValueError("Cannot render video: keep_segments is empty.")  # Raise error
 
@@ -70,7 +79,7 @@ def render_video(
     output_dir = os.path.dirname(os.path.abspath(output_path))  # Resolve target directory
     os.makedirs(output_dir, exist_ok=True)  # Create target directory if needed
 
-    # Calculate optimal memory budget and concurrency
+    # Calculate optimal memory and CPU budget
     budget = calculate_render_budget(is_video=True)  # Dynamic resource inspection
     effective_workers = min(budget.workers, total_segments)  # Bounded worker pool
 
@@ -99,7 +108,8 @@ def render_video(
 
     try:  # Ensure cleanup upon completion or failure
         if progress_callback:  # Initial progress notification
-            progress_callback(0.05, f"Allocated {effective_workers} workers ({budget.usable_mb:.0f} MB memory budget)...")
+            worker_label = "worker" if effective_workers == 1 else "workers"  # Grammatical agreement
+            progress_callback(0.05, f"Allocated {effective_workers} {worker_label} (safe CPU & memory budget)...")
 
         completed_slices = 0  # Counter for completed tasks
         with ThreadPoolExecutor(max_workers=effective_workers) as executor:  # Managed worker pool
@@ -120,11 +130,12 @@ def render_video(
             for future in as_completed(future_to_idx):  # Await each slice completion
                 future.result()  # Propagate any rendering exception
                 completed_slices += 1  # Increment counter
+                time.sleep(0.01)  # Yield CPU cycles to Python HTTP server thread
                 if progress_callback:  # Update progress
                     pct = 0.05 + (0.85 * (completed_slices / total_segments))  # Progress fraction
                     progress_callback(
                         pct,
-                        f"Rendering slices: {completed_slices}/{total_segments} ({effective_workers} workers active)...",
+                        f"Rendering slices: {completed_slices}/{total_segments}...",
                     )  # Progress message
 
         # Build FFmpeg concat demuxer manifest
