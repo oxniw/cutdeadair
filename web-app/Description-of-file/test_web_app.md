@@ -11,6 +11,7 @@ Automated test suite verifying security validation (path traversal sanitization,
   - `test_generate_job_id`: Checks 32-character random hex token format.
   - `test_calculate_segments_silence_cut`: Tests silence excision and margin padding.
   - `test_job_persistence_and_recovery`: Verifies job metadata survives memory clearing and recovers from disk storage.
+  - `test_system_resources_budget`: Validates memory detection, safety margin boundaries, and worker allocation.
 
 ## Dependencies & Data Flow
 - **Imports**: `unittest`, `security.*`, `domain_models.*`, `calculate_segments.*`.

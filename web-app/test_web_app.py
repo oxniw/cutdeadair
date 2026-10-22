@@ -13,6 +13,7 @@ from security import sanitize_filename, validate_file_extension, validate_file_s
 from domain_models import SilenceInterval, KeepSegment, ProcessingSettings
 from calculate_segments import calculate_segments, merge_overlapping_intervals
 from job_manager import create_job, get_job, update_job, delete_job, _jobs
+from system_resources import get_available_memory_mb, calculate_render_budget
 
 
 class TestWebAppSecurityAndDomain(unittest.TestCase):
@@ -76,6 +77,19 @@ class TestWebAppSecurityAndDomain(unittest.TestCase):
         # Cleanup
         delete_job(job_id)
         self.assertIsNone(get_job(job_id))
+
+    def test_system_resources_budget(self):
+        """Verifies memory detection returns positive bounds and allocates safe workers."""
+        avail = get_available_memory_mb()
+        self.assertGreater(avail, 0.0)
+
+        budget = calculate_render_budget(is_video=True)
+        self.assertGreater(budget.available_mb, 0.0)
+        self.assertGreater(budget.usable_mb, 0.0)
+        self.assertLess(budget.usable_mb, budget.available_mb)
+        self.assertGreaterEqual(budget.workers, 1)
+        self.assertLessEqual(budget.workers, 8)
+        self.assertGreaterEqual(budget.threads_per_worker, 1)
 
 
 if __name__ == "__main__":

@@ -86,3 +86,13 @@ class ProcessSummary:
     @property
     def time_saved(self) -> float:
         return max(0.0, self.original_duration - self.processed_duration)
+
+
+@dataclass(frozen=True)
+class RenderBudget:
+    """Resource budget dynamically calculated from available system/container memory."""
+    available_mb: float
+    usable_mb: float
+    workers: int
+    threads_per_worker: int
+    safety_margin_mb: float

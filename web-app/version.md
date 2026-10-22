@@ -19,3 +19,5 @@
 - Low-memory sequential video slice rendering with concat demuxer stream copy to prevent container OOM crashes.
 - Disk-backed persistent job store with automatic recovery after server restarts and crash detection.
 - Resilient polling and status error handling in web client preventing infinite retry loops.
+- Dynamic system memory detection probing Linux Cgroups v1/v2, procfs, and Windows APIs.
+- Adaptive rendering concurrency auto-scaling worker pools and encoding threads to available RAM while guarding a safety reserve.

@@ -1,13 +1,15 @@
 # ==============================================================================
 # File: .//Description-of-file/render_video.md
-# Overview: Low-memory sequential video rendering engine slicing segments individually and stitching via concat demuxer.
+# Overview: Memory-budgeted concurrent video rendering engine dynamically adjusting workers and threads to available RAM.
 # ==============================================================================
 
 import os  # Operating system file operations
 import subprocess  # Subprocess execution for FFmpeg
 import tempfile  # Temporary directory management
+from concurrent.futures import ThreadPoolExecutor, as_completed  # Managed concurrent execution
 from typing import List, Callable, Optional  # Type annotations
 from domain_models import KeepSegment  # Domain model representing speech segment
+from system_resources import calculate_render_budget  # Memory and worker budgeting
 
 
 def _render_single_slice(
@@ -17,8 +19,9 @@ def _render_single_slice(
     end: float,  # Segment end timestamp in seconds
     video_preset: str = "ultrafast",  # x264 preset minimizing memory lookahead
     video_crf: int = 22,  # Target video quality constant rate factor
+    threads: int = 1,  # Worker thread count
 ) -> None:
-    """Renders a single video slice sequentially using bounded memory and single thread."""
+    """Renders a single video slice using bounded memory and specified thread limit."""
     cmd = [  # Construct FFmpeg execution argument list
         "ffmpeg",  # Binary name
         "-y",  # Overwrite destination file without prompting
@@ -29,7 +32,7 @@ def _render_single_slice(
         "-c:v", "libx264",  # Standard H.264 video codec
         "-preset", video_preset,  # Ultrafast preset avoids lookahead buffers
         "-crf", str(video_crf),  # Video quality level
-        "-threads", "1",  # Single thread prevents thread memory explosion
+        "-threads", str(max(1, threads)),  # Bounded thread allocation
         "-c:a", "aac",  # AAC audio codec
         "-b:a", "128k",  # Standard audio bitrate
         "-ar", "44100",  # Normalize sample rate across slices
@@ -55,7 +58,7 @@ def render_video(
     video_crf: int = 22,  # Encoding quality default
     progress_callback: Optional[Callable[[float, str], None]] = None,  # Progress reporter
 ) -> str:
-    """Renders video segments sequentially to remain strictly within container memory limits."""
+    """Renders video segments concurrently within dynamic memory safety budgets."""
     if not keep_segments:  # Guard against empty segment lists
         raise ValueError("Cannot render video: keep_segments is empty.")  # Raise error
 
@@ -66,6 +69,10 @@ def render_video(
     total_segments = len(valid_segments)  # Total number of slices to process
     output_dir = os.path.dirname(os.path.abspath(output_path))  # Resolve target directory
     os.makedirs(output_dir, exist_ok=True)  # Create target directory if needed
+
+    # Calculate optimal memory budget and concurrency
+    budget = calculate_render_budget(is_video=True)  # Dynamic resource inspection
+    effective_workers = min(budget.workers, total_segments)  # Bounded worker pool
 
     # Fast path: single continuous segment
     if total_segments == 1:  # If only one segment exists
@@ -78,32 +85,47 @@ def render_video(
             end=valid_segments[0].end,  # End time
             video_preset=video_preset,  # Preset
             video_crf=video_crf,  # CRF
+            threads=budget.threads_per_worker,  # Threads
         )  # Direct slice completed
         if progress_callback:  # If callback supplied
             progress_callback(1.0, "Video rendering complete.")  # Complete status
         return output_path  # Return output file path
 
-    # Multi-segment path: sequential slice extraction followed by concat demuxer
+    # Multi-segment path: parallel slice extraction followed by concat demuxer
     temp_dir = tempfile.mkdtemp(prefix="deadair_slice_")  # Create isolated temporary directory
-    slice_files: List[str] = []  # Track generated slice file paths
+    slice_files: List[str] = [  # Generate file paths for all slices
+        os.path.join(temp_dir, f"slice_{i:05d}.mp4") for i in range(total_segments)
+    ]  # Slices mapped
 
     try:  # Ensure cleanup upon completion or failure
-        for idx, seg in enumerate(valid_segments):  # Iterate sequentially through segments
-            slice_path = os.path.join(temp_dir, f"slice_{idx:05d}.mp4")  # Formulate slice file path
-            slice_files.append(slice_path)  # Record slice path in list
+        if progress_callback:  # Initial progress notification
+            progress_callback(0.05, f"Allocated {effective_workers} workers ({budget.usable_mb:.0f} MB memory budget)...")
 
-            if progress_callback:  # Report progress to caller
-                pct = 0.1 + (0.75 * (idx / total_segments))  # Calculate fractional progress
-                progress_callback(pct, f"Rendering video slice {idx + 1}/{total_segments}...")  # Send message
+        completed_slices = 0  # Counter for completed tasks
+        with ThreadPoolExecutor(max_workers=effective_workers) as executor:  # Managed worker pool
+            future_to_idx = {  # Submit slice tasks
+                executor.submit(
+                    _render_single_slice,
+                    input_path,
+                    slice_files[idx],
+                    seg.start,
+                    seg.end,
+                    video_preset,
+                    video_crf,
+                    budget.threads_per_worker,
+                ): idx
+                for idx, seg in enumerate(valid_segments)
+            }  # Tasks submitted
 
-            _render_single_slice(  # Render slice in its own isolated process
-                input_path=input_path,  # Source media
-                output_path=slice_path,  # Destination slice
-                start=seg.start,  # Slice start
-                end=seg.end,  # Slice end
-                video_preset=video_preset,  # Memory-safe preset
-                video_crf=video_crf,  # Video quality
-            )  # Slice rendered
+            for future in as_completed(future_to_idx):  # Await each slice completion
+                future.result()  # Propagate any rendering exception
+                completed_slices += 1  # Increment counter
+                if progress_callback:  # Update progress
+                    pct = 0.05 + (0.85 * (completed_slices / total_segments))  # Progress fraction
+                    progress_callback(
+                        pct,
+                        f"Rendering slices: {completed_slices}/{total_segments} ({effective_workers} workers active)...",
+                    )  # Progress message
 
         # Build FFmpeg concat demuxer manifest
         manifest_path = os.path.join(temp_dir, "manifest.txt")  # Path to concat manifest
@@ -113,7 +135,7 @@ def render_video(
                 f.write(f"file '{clean_path}'\n")  # Write demuxer file line
 
         if progress_callback:  # Update progress for stitching phase
-            progress_callback(0.9, "Stitching video segments together...")  # Status message
+            progress_callback(0.92, "Joining video segments...")  # Status message
 
         # Stitch video slices with stream copy (instantaneous, zero re-encode, minimal memory)
         concat_cmd = [  # Concat command argument list
