@@ -333,13 +333,13 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .highlight-row {
-  background-color: #000000;
-  color: #ffffff;
+  background-color: #ffffff;
+  color: #000000;
 }
 
 .highlight-row .stat-label,
 .highlight-row .stat-val {
-  color: #ffffff;
+  color: #000000;
 }
 
 .stat-saved {
