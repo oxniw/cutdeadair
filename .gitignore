@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+processed/
+web-app/storage/uploads/*
+web-app/storage/processed/*
+!web-app/storage/uploads/.gitkeep
+!web-app/storage/processed/.gitkeep
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

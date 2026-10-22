@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CUTDEADAIR — Silence & Dead Air Cutter</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo">
+        <span class="brand-box">CDA</span>
+        <h1>CUTDEADAIR</h1>
+      </div>
+      <p class="tagline">Audio & Video Silence Removal — Two-Color Monochrome Edition</p>
+    </header>
+
+    <!-- Upload Section -->
+    <section class="card upload-card">
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="file-input" accept="audio/*,video/*,.mp3,.wav,.flac,.aac,.m4a,.ogg,.mp4,.mkv,.mov,.avi,.webm">
+        <div class="dropzone-content">
+          <div class="icon">[ + ]</div>
+          <p class="dropzone-text">DRAG & DROP AUDIO OR VIDEO HERE</p>
+          <p class="dropzone-sub">or click to browse files (MP3, WAV, FLAC, M4A, MP4, MKV, MOV, WEBM)</p>
+        </div>
+      </div>
+      <div id="file-info" class="file-info hidden">
+        <div class="file-details">
+          <span id="file-badge" class="badge">AUDIO</span>
+          <span id="file-name" class="filename">filename.mp3</span>
+          <span id="file-size" class="filesize">0 MB</span>
+        </div>
+        <button id="remove-file-btn" class="btn btn-outline btn-sm">REMOVE</button>
+      </div>
+      <div id="upload-progress-container" class="progress-bar-container hidden">
+        <div id="upload-progress-fill" class="progress-bar-fill"></div>
+      </div>
+    </section>
+
+    <!-- Main Grid: Settings & Preview -->
+    <div class="grid">
+      <!-- Settings Column -->
+      <section class="card settings-card">
+        <div class="card-header">
+          <h2>DETECTION & CUT CONTROLS</h2>
+        </div>
+
+        <!-- Presets -->
+        <div class="form-group">
+          <label for="preset-select">PRESET CONFIGURATION</label>
+          <select id="preset-select" class="select-input">
+            <option value="Podcast / Voiceover">Podcast / Voiceover (Balanced 0.3s pause)</option>
+            <option value="Aggressive Cut">Aggressive Cut (YouTube / fast pace)</option>
+            <option value="Subtle Breath Retain">Subtle Breath Retain (Audiobooks)</option>
+            <option value="Custom">Custom Parameters</option>
+          </select>
+          <p id="preset-desc" class="field-help">Natural speech cadence, keeps breaths, shortens pauses to 0.3s.</p>
+        </div>
+
+        <!-- Sound Power Slider -->
+        <div class="form-group">
+          <div class="slider-header">
+            <label for="threshold-slider">SOUND POWER CUTOFF</label>
+            <span id="threshold-val" class="slider-val">-32.0 dB</span>
+          </div>
+          <input type="range" id="threshold-slider" min="-70" max="-5" step="0.5" value="-32">
+          <p class="field-help">If sound power &lt;= this slider bar, cut that zone.</p>
+        </div>
+
+        <!-- Min Zone Duration Slider -->
+        <div class="form-group">
+          <div class="slider-header">
+            <label for="min-duration-slider">MIN ZONE DURATION</label>
+            <span id="min-duration-val" class="slider-val">0.60 s</span>
+          </div>
+          <input type="range" id="min-duration-slider" min="0.05" max="3.0" step="0.05" value="0.6">
+          <p class="field-help">Minimum length of low-power zone to cut.</p>
+        </div>
+
+        <!-- Margin Padding Slider -->
+        <div class="form-group">
+          <div class="slider-header">
+            <label for="margin-slider">SPEECH BUFFER / MARGIN</label>
+            <span id="margin-val" class="slider-val">0.15 s</span>
+          </div>
+          <input type="range" id="margin-slider" min="0.0" max="0.5" step="0.02" value="0.15">
+          <p class="field-help">Safety buffer kept around spoken words to avoid clipping.</p>
+        </div>
+
+        <!-- Mode Radio -->
+        <div class="form-group">
+          <label>DEAD AIR ACTION</label>
+          <div class="radio-group">
+            <label class="radio-label">
+              <input type="radio" name="cut-mode" value="shorten" checked>
+              <span>Shorten dead air to natural pause</span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="cut-mode" value="cut">
+              <span>Completely cut and remove dead air</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Target Pause Slider -->
+        <div class="form-group" id="target-pause-group">
+          <div class="slider-header">
+            <label for="target-pause-slider">TARGET PAUSE LENGTH</label>
+            <span id="target-pause-val" class="slider-val">0.30 s</span>
+          </div>
+          <input type="range" id="target-pause-slider" min="0.05" max="0.8" step="0.05" value="0.3">
+          <p class="field-help">Duration of retained ambient room tone between speech.</p>
+        </div>
+
+        <!-- Video Mode Settings -->
+        <div class="video-box" id="video-settings-box">
+          <h3>VIDEO MODE SETTINGS</h3>
+          <label class="checkbox-label">
+            <input type="checkbox" id="video-mode-check" checked>
+            <span>Sync video frames with audio cuts</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="extract-audio-check">
+            <span>Extract Audio Only (.mp3) from video</span>
+          </label>
+          <div class="form-group compact-group">
+            <label for="video-quality-select">VIDEO QUALITY / SPEED</label>
+            <select id="video-quality-select" class="select-input">
+              <option value="Fast (CRF 22)" selected>Fast (CRF 22 - Recommended)</option>
+              <option value="High Quality (CRF 18)">High Quality (CRF 18)</option>
+              <option value="Compact (CRF 26)">Compact (CRF 26)</option>
+              <option value="Draft (Ultrafast)">Draft (Ultrafast)</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <!-- Preview & Execution Column -->
+      <section class="card preview-card">
+        <div class="card-header">
+          <h2>PRE-FLIGHT SCAN & STATS</h2>
+          <button id="scan-btn" class="btn btn-outline" disabled>SCAN MEDIA</button>
+        </div>
+
+        <div class="stats-table">
+          <div class="stat-row">
+            <span class="stat-label">ORIGINAL DURATION</span>
+            <span id="stat-orig" class="stat-val">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">DEAD AIR DETECTED</span>
+            <span id="stat-silence" class="stat-val">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">ESTIMATED OUTPUT</span>
+            <span id="stat-est" class="stat-val">—</span>
+          </div>
+          <div class="stat-row highlight-row">
+            <span class="stat-label">TIME SAVED</span>
+            <span id="stat-saved" class="stat-val stat-saved">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">MEAN SOUND POWER</span>
+            <span id="stat-mean-power" class="stat-val">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">PEAK SOUND POWER</span>
+            <span id="stat-max-power" class="stat-val">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">MEDIA TYPE</span>
+            <span id="stat-media-type" class="stat-val">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">PROCESSING MODE</span>
+            <span id="stat-process-mode" class="stat-val">—</span>
+          </div>
+        </div>
+
+        <!-- Action / Rendering Section -->
+        <div class="action-box">
+          <button id="process-btn" class="btn btn-solid btn-block" disabled>START CUTTING DEAD AIR</button>
+          
+          <div id="render-progress-container" class="progress-box hidden">
+            <div class="progress-bar-container">
+              <div id="render-progress-fill" class="progress-bar-fill"></div>
+            </div>
+            <div class="progress-meta">
+              <span id="status-text">Processing...</span>
+              <span id="progress-pct">0%</span>
+            </div>
+          </div>
+
+          <div id="download-box" class="download-box hidden">
+            <p id="result-summary" class="result-text">Process complete!</p>
+            <a id="download-btn" class="btn btn-solid btn-block" href="#" download>DOWNLOAD PROCESSED FILE</a>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <p>CUTDEADAIR WEB EDITION — ZERO EXTERNAL TRACKING — LOCAL PROCESSING</p>
+    </footer>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
