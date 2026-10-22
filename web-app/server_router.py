@@ -74,17 +74,29 @@ class DeadAirHTTPHandler(BaseHTTPRequestHandler):
             if not job:
                 self._send_error(404, "Job not found.")
                 return
+            summary_data = None
+            if job.get("summary"):
+                s = job["summary"]
+                if isinstance(s, dict):
+                    summary_data = {
+                        "original_duration": s.get("original_duration", 0.0),
+                        "processed_duration": s.get("processed_duration", 0.0),
+                        "time_saved": s.get("time_saved", 0.0),
+                    }
+                else:
+                    summary_data = {
+                        "original_duration": getattr(s, "original_duration", 0.0),
+                        "processed_duration": getattr(s, "processed_duration", 0.0),
+                        "time_saved": getattr(s, "time_saved", 0.0),
+                    }
+
             clean_job = {
                 "id": job["id"],
                 "status": job["status"],
                 "progress": job["progress"],
                 "message": job["message"],
                 "error": job["error"],
-                "summary": {
-                    "original_duration": job["summary"].original_duration,
-                    "processed_duration": job["summary"].processed_duration,
-                    "time_saved": job["summary"].time_saved,
-                } if job.get("summary") else None,
+                "summary": summary_data,
             }
             self._send_json(200, clean_job)
         elif path.startswith("/api/download/"):

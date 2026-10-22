@@ -7,7 +7,9 @@ __pycache__/
 .env
 storage/uploads/*
 storage/processed/*
+storage/jobs/*
 !storage/uploads/.gitkeep
 !storage/processed/.gitkeep
+!storage/jobs/.gitkeep
 test_web_app.py
 .dockerignore

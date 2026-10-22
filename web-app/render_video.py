@@ -1,174 +1,154 @@
 # ==============================================================================
 # File: .//Description-of-file/render_video.md
-# Overview: Video rendering engine slicing and concatenating video frames and audio streams synchronously using FFmpeg.
+# Overview: Low-memory sequential video rendering engine slicing segments individually and stitching via concat demuxer.
 # ==============================================================================
 
-import os
-import subprocess
-import tempfile
-from typing import List, Callable, Optional
-from domain_models import KeepSegment
+import os  # Operating system file operations
+import subprocess  # Subprocess execution for FFmpeg
+import tempfile  # Temporary directory management
+from typing import List, Callable, Optional  # Type annotations
+from domain_models import KeepSegment  # Domain model representing speech segment
 
 
-def _render_video_single_chunk(
-    input_path: str,
-    output_path: str,
-    segments: List[KeepSegment],
-    video_preset: str = "fast",
-    video_crf: int = 22,
+def _render_single_slice(
+    input_path: str,  # Input media file path
+    output_path: str,  # Output segment slice destination
+    start: float,  # Segment start timestamp in seconds
+    end: float,  # Segment end timestamp in seconds
+    video_preset: str = "ultrafast",  # x264 preset minimizing memory lookahead
+    video_crf: int = 22,  # Target video quality constant rate factor
 ) -> None:
-    """Renders video and audio segments in a single FFmpeg invocation."""
-    num_segs = len(segments)
+    """Renders a single video slice sequentially using bounded memory and single thread."""
+    cmd = [  # Construct FFmpeg execution argument list
+        "ffmpeg",  # Binary name
+        "-y",  # Overwrite destination file without prompting
+        "-hide_banner",  # Suppress banner output
+        "-ss", f"{start:.3f}",  # Fast seek to start timestamp
+        "-to", f"{end:.3f}",  # Cut up to end timestamp
+        "-i", input_path,  # Input file path
+        "-c:v", "libx264",  # Standard H.264 video codec
+        "-preset", video_preset,  # Ultrafast preset avoids lookahead buffers
+        "-crf", str(video_crf),  # Video quality level
+        "-threads", "1",  # Single thread prevents thread memory explosion
+        "-c:a", "aac",  # AAC audio codec
+        "-b:a", "128k",  # Standard audio bitrate
+        "-ar", "44100",  # Normalize sample rate across slices
+        "-avoid_negative_ts", "make_zero",  # Shift timestamps to zero
+        output_path,  # Output destination path
+    ]  # End of command arguments
 
-    if num_segs == 1 and segments[0].start <= 0.001:
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-hide_banner",
-            "-i", input_path,
-            "-ss", f"{segments[0].start:.3f}",
-            "-to", f"{segments[0].end:.3f}",
-            "-c:v", "libx264",
-            "-preset", video_preset,
-            "-crf", str(video_crf),
-            "-c:a", "aac",
-            "-b:a", "192k",
-            output_path,
-        ]
-    else:
-        filter_parts = []
-        concat_inputs = []
-
-        for idx, seg in enumerate(segments):
-            v_label = f"v{idx}"
-            a_label = f"a{idx}"
-            filter_parts.append(
-                f"[0:v]trim=start={seg.start:.3f}:end={seg.end:.3f},setpts=PTS-STARTPTS[{v_label}];"
-                f"[0:a]atrim=start={seg.start:.3f}:end={seg.end:.3f},asetpts=PTS-STARTPTS[{a_label}];"
-            )
-            concat_inputs.append(f"[{v_label}][{a_label}]")
-
-        concat_clause = f"{''.join(concat_inputs)}concat=n={num_segs}:v=1:a=1[outv][outa]"
-        filter_complex_str = "".join(filter_parts) + concat_clause
-
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-hide_banner",
-            "-i", input_path,
-            "-filter_complex", filter_complex_str,
-            "-map", "[outv]",
-            "-map", "[outa]",
-            "-c:v", "libx264",
-            "-preset", video_preset,
-            "-crf", str(video_crf),
-            "-c:a", "aac",
-            "-b:a", "192k",
-            output_path,
-        ]
-
-    process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if process.returncode != 0:
-        raise RuntimeError(f"FFmpeg video rendering failed: {process.stderr}")
+    process = subprocess.run(  # Execute FFmpeg subprocess synchronously
+        cmd,  # Command list
+        stdout=subprocess.PIPE,  # Capture standard output
+        stderr=subprocess.PIPE,  # Capture standard error
+        text=True,  # Decode text stream
+    )  # Await process exit
+    if process.returncode != 0:  # Check return code for error
+        raise RuntimeError(f"FFmpeg slice rendering failed: {process.stderr}")  # Raise descriptive error
 
 
 def render_video(
-    input_path: str,
-    output_path: str,
-    keep_segments: List[KeepSegment],
-    video_preset: str = "fast",
-    video_crf: int = 22,
-    progress_callback: Optional[Callable[[float, str], None]] = None,
+    input_path: str,  # Source video file path
+    output_path: str,  # Final rendered media file path
+    keep_segments: List[KeepSegment],  # Whitelisted time segments to retain
+    video_preset: str = "ultrafast",  # Encoding preset default
+    video_crf: int = 22,  # Encoding quality default
+    progress_callback: Optional[Callable[[float, str], None]] = None,  # Progress reporter
 ) -> str:
-    """Renders video and audio segments with frame synchronization."""
-    if not keep_segments:
-        raise ValueError("Cannot render video: keep_segments is empty.")
+    """Renders video segments sequentially to remain strictly within container memory limits."""
+    if not keep_segments:  # Guard against empty segment lists
+        raise ValueError("Cannot render video: keep_segments is empty.")  # Raise error
 
-    output_dir = os.path.dirname(os.path.abspath(output_path))
-    os.makedirs(output_dir, exist_ok=True)
+    valid_segments = [s for s in keep_segments if s.end > s.start]  # Filter out empty or negative spans
+    if not valid_segments:  # Ensure at least one valid slice remains
+        raise ValueError("Cannot render video: all segments have zero duration.")  # Raise error
 
-    total_segments = len(keep_segments)
-    CHUNK_SIZE = 60
+    total_segments = len(valid_segments)  # Total number of slices to process
+    output_dir = os.path.dirname(os.path.abspath(output_path))  # Resolve target directory
+    os.makedirs(output_dir, exist_ok=True)  # Create target directory if needed
 
-    if total_segments <= CHUNK_SIZE:
-        if progress_callback:
-            progress_callback(0.2, f"Synchronizing {total_segments} video/audio segments...")
+    # Fast path: single continuous segment
+    if total_segments == 1:  # If only one segment exists
+        if progress_callback:  # If callback supplied
+            progress_callback(0.4, "Rendering single video segment...")  # Update progress
+        _render_single_slice(  # Render directly to final output
+            input_path=input_path,  # Source video
+            output_path=output_path,  # Final target
+            start=valid_segments[0].start,  # Start time
+            end=valid_segments[0].end,  # End time
+            video_preset=video_preset,  # Preset
+            video_crf=video_crf,  # CRF
+        )  # Direct slice completed
+        if progress_callback:  # If callback supplied
+            progress_callback(1.0, "Video rendering complete.")  # Complete status
+        return output_path  # Return output file path
 
-        _render_video_single_chunk(
-            input_path=input_path,
-            output_path=output_path,
-            segments=keep_segments,
-            video_preset=video_preset,
-            video_crf=video_crf,
-        )
+    # Multi-segment path: sequential slice extraction followed by concat demuxer
+    temp_dir = tempfile.mkdtemp(prefix="deadair_slice_")  # Create isolated temporary directory
+    slice_files: List[str] = []  # Track generated slice file paths
 
-        if progress_callback:
-            progress_callback(1.0, "Video rendering complete.")
-        return output_path
+    try:  # Ensure cleanup upon completion or failure
+        for idx, seg in enumerate(valid_segments):  # Iterate sequentially through segments
+            slice_path = os.path.join(temp_dir, f"slice_{idx:05d}.mp4")  # Formulate slice file path
+            slice_files.append(slice_path)  # Record slice path in list
 
-    temp_dir = tempfile.mkdtemp(prefix="web_deadair_vid_")
-    chunk_files: List[str] = []
+            if progress_callback:  # Report progress to caller
+                pct = 0.1 + (0.75 * (idx / total_segments))  # Calculate fractional progress
+                progress_callback(pct, f"Rendering video slice {idx + 1}/{total_segments}...")  # Send message
 
-    try:
-        num_chunks = (total_segments + CHUNK_SIZE - 1) // CHUNK_SIZE
+            _render_single_slice(  # Render slice in its own isolated process
+                input_path=input_path,  # Source media
+                output_path=slice_path,  # Destination slice
+                start=seg.start,  # Slice start
+                end=seg.end,  # Slice end
+                video_preset=video_preset,  # Memory-safe preset
+                video_crf=video_crf,  # Video quality
+            )  # Slice rendered
 
-        for chunk_idx in range(num_chunks):
-            start_i = chunk_idx * CHUNK_SIZE
-            end_i = min(start_i + CHUNK_SIZE, total_segments)
-            sub_segments = keep_segments[start_i:end_i]
+        # Build FFmpeg concat demuxer manifest
+        manifest_path = os.path.join(temp_dir, "manifest.txt")  # Path to concat manifest
+        with open(manifest_path, "w", encoding="utf-8") as f:  # Write manifest file
+            for s_path in slice_files:  # Loop through generated slice paths
+                clean_path = s_path.replace("\\", "/")  # Normalize forward slashes for FFmpeg
+                f.write(f"file '{clean_path}'\n")  # Write demuxer file line
 
-            chunk_filename = os.path.join(temp_dir, f"chunk_{chunk_idx:04d}.mp4")
-            chunk_files.append(chunk_filename)
+        if progress_callback:  # Update progress for stitching phase
+            progress_callback(0.9, "Stitching video segments together...")  # Status message
 
-            if progress_callback:
-                frac = (chunk_idx / num_chunks) * 0.85
-                progress_callback(frac, f"Rendering video part {chunk_idx + 1}/{num_chunks}...")
+        # Stitch video slices with stream copy (instantaneous, zero re-encode, minimal memory)
+        concat_cmd = [  # Concat command argument list
+            "ffmpeg",  # Binary name
+            "-y",  # Overwrite destination
+            "-hide_banner",  # Suppress banner
+            "-f", "concat",  # Use concat demuxer format
+            "-safe", "0",  # Allow arbitrary file paths
+            "-i", manifest_path,  # Pass manifest input
+            "-c", "copy",  # Direct bitstream copy without decoding
+            output_path,  # Final media output destination
+        ]  # End of concat arguments
 
-            _render_video_single_chunk(
-                input_path=input_path,
-                output_path=chunk_filename,
-                segments=sub_segments,
-                video_preset=video_preset,
-                video_crf=video_crf,
-            )
+        result = subprocess.run(  # Execute concat demuxer
+            concat_cmd,  # Command list
+            stdout=subprocess.PIPE,  # Capture stdout
+            stderr=subprocess.PIPE,  # Capture stderr
+            text=True,  # Decode text stream
+        )  # Wait for completion
+        if result.returncode != 0:  # Check for error
+            raise RuntimeError(f"FFmpeg chunk joining failed: {result.stderr}")  # Raise error
 
-        manifest_path = os.path.join(temp_dir, "manifest.txt")
-        with open(manifest_path, "w", encoding="utf-8") as f:
-            for c_path in chunk_files:
-                clean_path = c_path.replace("\\", "/")
-                f.write(f"file '{clean_path}'\n")
+        if progress_callback:  # Report final completion
+            progress_callback(1.0, "Video rendering complete.")  # Complete status
 
-        if progress_callback:
-            progress_callback(0.9, "Joining video parts...")
+        return output_path  # Return path to processed video
 
-        concat_cmd = [
-            "ffmpeg",
-            "-y",
-            "-hide_banner",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", manifest_path,
-            "-c", "copy",
-            output_path,
-        ]
-
-        result = subprocess.run(concat_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"FFmpeg chunk joining failed: {result.stderr}")
-
-        if progress_callback:
-            progress_callback(1.0, "Video rendering complete.")
-
-        return output_path
-
-    finally:
-        if os.path.exists(temp_dir):
-            for fname in os.listdir(temp_dir):
-                try:
-                    os.remove(os.path.join(temp_dir, fname))
-                except OSError:
-                    pass
-            try:
-                os.rmdir(temp_dir)
-            except OSError:
-                pass
+    finally:  # Cleanup temporary slices and directory
+        if os.path.exists(temp_dir):  # Verify temp directory exists
+            for fname in os.listdir(temp_dir):  # Iterate across temp files
+                try:  # Attempt deletion
+                    os.remove(os.path.join(temp_dir, fname))  # Delete file
+                except OSError:  # Ignore deletion errors
+                    pass  # Pass
+            try:  # Attempt directory removal
+                os.rmdir(temp_dir)  # Remove empty directory
+            except OSError:  # Ignore deletion errors
+                pass  # Pass

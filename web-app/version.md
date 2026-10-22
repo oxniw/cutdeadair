@@ -16,3 +16,6 @@
 - Vercel configuration (`vercel.json`) with edge static hosting and API proxy rewrites.
 - Cross-Origin Resource Sharing (CORS) preflight support and configurable origins via environment variables.
 - Comprehensive deployment guide in `DEPLOYMENT.md`.
+- Low-memory sequential video slice rendering with concat demuxer stream copy to prevent container OOM crashes.
+- Disk-backed persistent job store with automatic recovery after server restarts and crash detection.
+- Resilient polling and status error handling in web client preventing infinite retry loops.

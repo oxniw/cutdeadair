@@ -374,6 +374,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function startPolling() {
     if (pollInterval) clearInterval(pollInterval);
+    let consecutiveErrors = 0;
 
     pollInterval = setInterval(() => {
       if (!currentJobId) {
@@ -382,7 +383,13 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       fetch(`${API_BASE}/api/status/${currentJobId}`)
-        .then((res) => res.json())
+        .then((res) => {
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+          }
+          consecutiveErrors = 0;
+          return res.json();
+        })
         .then((job) => {
           if (!job) return;
 
@@ -411,7 +418,16 @@ document.addEventListener("DOMContentLoaded", () => {
             alert(`Process failed: ${job.error}`);
           }
         })
-        .catch(() => {});
+        .catch((err) => {
+          consecutiveErrors++;
+          if (err.message.includes("404") || consecutiveErrors >= 8) {
+            clearInterval(pollInterval);
+            processBtn.disabled = false;
+            scanBtn.disabled = false;
+            statusText.textContent = "Session lost or server restarted. Please re-upload file.";
+            alert("The rendering session was interrupted or the server restarted. Please re-upload your media and try again.");
+          }
+        });
     }, 800);
   }
 });

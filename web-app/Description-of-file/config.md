@@ -8,7 +8,7 @@ Web application configuration constants defining dynamic network settings from e
 - `CORS_ALLOWED_ORIGINS: str`: Allowed cross-origin source string loaded from `CORS_ALLOWED_ORIGINS` (default `*`).
 - `MAX_UPLOAD_SIZE_BYTES: int`: Maximum upload payload size (500 MB).
 - `JOB_EXPIRATION_SECONDS: int`: Cache lifetime for uploaded files (1 hour).
-- `TEMP_UPLOAD_DIR: str`, `TEMP_PROCESSED_DIR: str`: Isolated filesystem directories.
+- `TEMP_UPLOAD_DIR: str`, `TEMP_PROCESSED_DIR: str`, `TEMP_JOBS_DIR: str`: Isolated filesystem directories for uploads, rendered output, and persistent job state.
 - `SUPPORTED_AUDIO_EXTENSIONS: Tuple[str, ...]`, `SUPPORTED_VIDEO_EXTENSIONS: Tuple[str, ...]`: Whitelisted formats.
 - `DEFAULT_SOUND_POWER_THRESHOLD_DB: float`: Default sound power cutoff (-32.0 dB).
 - `SOUND_POWER_MIN_DB: float`, `SOUND_POWER_MAX_DB: float`: Sound power slider boundaries.

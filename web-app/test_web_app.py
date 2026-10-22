@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from security import sanitize_filename, validate_file_extension, validate_file_size, generate_secure_job_id
 from domain_models import SilenceInterval, KeepSegment, ProcessingSettings
 from calculate_segments import calculate_segments, merge_overlapping_intervals
+from job_manager import create_job, get_job, update_job, delete_job, _jobs
 
 
 class TestWebAppSecurityAndDomain(unittest.TestCase):
@@ -57,6 +58,24 @@ class TestWebAppSecurityAndDomain(unittest.TestCase):
         self.assertAlmostEqual(segments[0].end, 10.1)
         self.assertAlmostEqual(segments[1].start, 14.9)
         self.assertAlmostEqual(segments[1].end, 30.0)
+
+    def test_job_persistence_and_recovery(self):
+        """Verifies jobs persist to disk and recover after memory cache clearance."""
+        job_id = create_job("test_audio.mp3", "storage/uploads/test.mp3")
+        update_job(job_id, progress=0.5, message="Testing...")
+
+        # Simulate server crash/restart by clearing in-memory cache
+        _jobs.clear()
+
+        # get_job should recover the job from disk
+        recovered = get_job(job_id)
+        self.assertIsNotNone(recovered)
+        self.assertEqual(recovered["id"], job_id)
+        self.assertEqual(recovered["progress"], 0.5)
+
+        # Cleanup
+        delete_job(job_id)
+        self.assertIsNone(get_job(job_id))
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ RUN useradd -m -u 10001 -s /bin/bash appuser
 WORKDIR /app
 
 # Create necessary storage directories and assign ownership to appuser
-RUN mkdir -p /app/storage/uploads /app/storage/processed \
+RUN mkdir -p /app/storage/uploads /app/storage/processed /app/storage/jobs \
     && chown -R appuser:appuser /app
 
 # Copy application files

@@ -16,6 +16,7 @@ MAX_UPLOAD_SIZE_BYTES: int = 500 * 1024 * 1024  # 500 MB max file size
 JOB_EXPIRATION_SECONDS: int = 3600               # 1 hour job lifetime
 TEMP_UPLOAD_DIR: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage", "uploads")
 TEMP_PROCESSED_DIR: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage", "processed")
+TEMP_JOBS_DIR: str = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage", "jobs")
 
 # Supported media extensions
 SUPPORTED_AUDIO_EXTENSIONS: Tuple[str, ...] = (

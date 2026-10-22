@@ -33,6 +33,7 @@ def render_audio(
             "-i", input_path,
             "-ss", f"{keep_segments[0].start:.3f}",
             "-to", f"{keep_segments[0].end:.3f}",
+            "-threads", "1",
             "-vn",
             output_path,
         ]
@@ -56,6 +57,7 @@ def render_audio(
         "-hide_banner",
         "-i", input_path,
         "-af", filter_expr,
+        "-threads", "1",
         "-vn",
         output_path,
     ]
